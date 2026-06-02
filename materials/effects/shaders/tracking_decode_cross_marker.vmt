@@ -1,0 +1,83 @@
+screenspace_general
+{
+    // Shader to use
+    // NOTE: Use '_ps20' suffix only (the engine corrects it to 'ps20b')
+    $pixshader "tracking_decode_cross_marker_ps20"
+
+    // Textures to use
+    // Use _rt_FullFrameFB to fetch the screen texture (framebuffer)
+    $basetexture "_rt_FullFrameFB"
+    $texture1    "_rt_Camera"
+    $texture2    ""
+    $texture3    ""
+
+    // Mandatory parameters, do not change these
+    $x360appchooser 1
+    $ignorez        1
+    $fix_fb         32768
+    "<dx90"
+    {
+        $no_draw 1
+    }
+    
+    // Various color/alpha mixing parameters
+    // usually you don't need to change these
+    $copyalpha                 1
+    $alpha_blend_color_overlay 0
+    $alpha_blend               0
+    $linearwrite               1
+    $linearread_basetexture    1
+    $linearread_texture1       1
+    $linearread_texture2       0
+    $linearread_texture3       0
+
+
+    $c2_x 0.0
+    $c2_y 0.0
+    $c2_z 0.0
+
+
+    $pos   "[0 0 0]"
+    $zero  0.0
+
+    Proxies
+    {
+        // Updates the framebuffer
+        // You only need this if you are going to be *reading* the framebuffer
+        // If you aren't using the framebuffer, or are only fetching its dimensions,
+        // you DON'T need this and it will save you some performance
+        Equals
+        {
+            srcVar1            $fix_fb
+            resultVar        $flags2
+        }
+        PlayerPosition
+        {
+            scale      1
+            resultVar  "$pos"
+        }
+        Clamp
+        {
+            srcVar1    $zero
+            min        "$pos[0]"
+            max        "$pos[0]"
+            resultVar  $c2_x
+        }
+        Clamp
+        {
+            srcVar1    $zero
+            min        "$pos[1]"
+            max        "$pos[1]"
+            resultVar  $c2_y
+        }
+        Clamp
+        {
+            srcVar1    $zero
+            min        "$pos[2]"
+            max        "$pos[2]"
+            resultVar  $c2_z
+        }
+
+        
+    }
+}

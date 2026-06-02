@@ -1,3 +1,7 @@
 *.vcs
 *.inc
 sound.cache
+*.bsp
+*.vmx
+*.log
+*.prt
