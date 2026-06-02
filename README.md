@@ -1,110 +1,162 @@
-# sdk_screenspace_shaders
-SDK that allows you to easily create custom screenspace pixel shaders for Source games.
+# Advanced sdk_screenspace_shaders
+Extends the sdk_screenspace_shaders repository with some advanced examples. This may be TF2 only.
 
-![screenshot](thumbnail.jpg)
+This has some more advanced examples including recovery of player eye angles to allow for 3D world-positioned and animated effects.
 
-# Background
-It has been discovered that the Source engine supports loading custom pixel shaders, via a completely undocumented shader named `screenspace_general`.
-The pixel shaders so far have been proven to work on the following:
-- Screen overlays
-- Brushes
-- Models
-- info_overlay
-- Decals
-- Particles
+### [Demo Video: Click here](https://www.youtube.com/watch?v=uHPn7UBUuuw)
 
-Such custom shaders can be packed into maps or downloaded by servers, and it works on both Windows and Linux.
-However in Portal 2 and CS:GO, they do not allow loading shaders outside of the `platform` directory, so custom shaders cannot be used by maps or servers there.
-Garry's Mod also cannot load custom shaders outside of the main `garrysmod` directory, therefore workshop addons or maps cannot use them. See the [relevant issue](https://github.com/Facepunch/garrysmod-requests/issues/2564).
+[![screenshot](docs/headline.png)](https://www.youtube.com/watch?v=uHPn7UBUuuw)
 
-This has only been extensively tested on Team Fortress 2 and Counter-Strike: Source, but it should also work for Day of Defeat Source, Half Life 2 etc.
+## Background
+Read the [original repository](https://github.com/ficool2/sdk_screenspace_shaders) first.
 
-Left 4 Dead 2 and Portal 2 have an extended version of this shader which also supports setting a custom vertex shader. Setting up a custom vertex shader has not been researched yet. 
+## Map Overview
+The map `demo_advanced_shaders.bsp` (in GitHub releases) has 4 buttons as shown below:
+![screenshot](docs/effects.png)
 
-# Usage
-This repository contains everything required to compile shaders, you do not need to download anything else.
+### Summary
+* **Blue Cube**: An animated blue cube with bloom, 1 pass.
+* **Crosshair**: A crosshair to show point stability. Increase your ping with `net_fakelag` to make it more stable, for some reason.
+* **Simple Black Hole**: 2-pass shader that draws a black hole on top of the animated cube and distorts your view.
+* **World Split**: 1 pass shader that literally splits the world.
 
-Go into the `shadersrc` folder and run `build_shaders.bat`. This should build the template and example shaders successfully.
-The generated shaders are in the `shaders` folder. You can drag and drop a shader onto the `build_shader.bat` to only compile a specific shader.
 
-Create a new folder in your game's `custom` folder such as `my_shaders`.
-Copy the `shaders` folder to that new folder, then copy the `materials` folder from this repository to your new folder as well.
+### Known Limitations
+* Mouse movement causes a tracking lag on very high FPS with very low ping. Increase ping (20-30+) or lower FPS
+* Firing certain guns like Scout scattergun "jolts" the camera, this is not accounted for
+* Crouching causes snapping (can be worked around but unimplemented)
+* Motion blur or view bobbing may cause unintended side effects
 
-Test if the shaders work by loading any map and running this command in console: 
-`sv_cheats 1;r_screenoverlay effects/shaders/example_wave`. 
-You should see your screen get deformed in a wavy-like pattern.
+### How-to
+You should be able to reverse engineer the files in this repository to figure out how to recreate them, but here's an overview.
 
-## Creating a Shader
-To create a new shader, copy the `template_ps2x.hlsl` file and rename it to whatever you like.  This example will rename it to `coolshader_ps2x.hlsl` (note: do not change the `_ps2x` suffix).
+* Eye angle recovery is done via a very large devbox with a `point_camera` and 4 specially placed and textured cubes. Scroll down for info. This needs to "surround" your map - or at least the bits where you want to recover eye angles (boss arena).
+* Player position is recovered via a proxy in the VMT directly and some Clamp proxies to put them into individual registers. Check `materials/effects/tracking_decode_cross_marker.vmt`.
+* Then there's some code you can copy from `tracking_decode_cross_marker_ps2x.hlsl` to recover a screen position of an arbitrary point in world space via `_rt_Camera` binding.
+* You need a `func_monitor` or `info_camera_link` entity "drawn" on-screen. It can be a 1x1 texture occluded by a floor or wall or func_detail. Otherwise _rt_Camera won't draw, or won't update if you step outside the draw zone of `func_monitor`.
+* To control material parameters from vScript, you need a `material_modify_control` set up, anchored (parent) to a func_brush with the same screenspace shader VMT, located in the `point_camera` devbox.
+- `material_modify_control` only updates when it's "in view" of either the main camera or the `point_camera`. The "material to modify" reference however is global - so when it updates on the brush, it'll update in your screenshader too.
+* Set a static FOV, it's something that you can't easily "calculate" from a shader. Technically, it is possible to retrieve a player's FOV in vScript, and pass it through player-specific fog colors into the `point_camera` (TODO). But vScript should be able to set FOV. In the map, point_clientcommand is used, but `SERVER_CAN_EXECUTE prevented server running command: fov_desired` can happen.
+* To stack shaders use both clientcommand `r_screenoverlay` as your first pass and `SetScriptOverlayMaterial` as the second. You can write to the framebuffer in the first pass and decode that information in the second to save information between passes. The cube->black hole demo does this by using 3 pixels in the top left of your screen to pass information to a second pass. This gets around sm2b limitations.
+* Not sure how this'll perform in the real world with jitter etc. Strangely, there's a good bit of lag with 0 ping, but `net_fakelag 30` or having 30+ ping makes it rock stable.
 
-Add this new shader to the list in `compile_shader_list.txt`.
-After you run `build_shaders.bat` again, your new shader should now get compiled.
 
-Next up, you will need to copy the auto-generated VMT for your shader. Go into `materials/effects/shaders/` and copy the vmt file (e.g. `coolshader.vmt`).  You can put this file in your custom `my_shaders` folder using the same `materials/effects/shaders` file structure, or the regular game directory.
+## How it works
+Shaders can access data from proxies in the [list of material proxies](https://developer.valvesoftware.com/wiki/List_of_material_proxies). These are bound at runtime and are one-way CPU->GPU. 
 
-### VSCode
-If you are using VSCode, this repo includes a launch.json and a tasks.json to build the shaders using VSCode's build/debug commands.
+You'll note there's a `PlayerPosition` proxy which allows the shader to access the player's world position. Great.
 
-Clone this repository and open the main `sdk_screenspace_shaders` folder in VSCode by going to File > Open Folder.  Alternatively you can press Ctrl + K + O or Ctrl + M + O.
+There's no `PlayerAngles` though, so we can't recover the player's view matrix to draw cool things at arbitrary world positions. No space-warping black holes that follow a boss around an arena without a workaround.
 
-You can now press either Ctrl + Shift + D and select "Build Current Shader".  Alternatively, press Ctrl + Shift + B to either build the current shader or all shaders (same as `build_shaders.bat`).
+### PlayerView
+Instead there's `PlayerView` which returns a single scalar: A dot product of the player's view angle and the relative origin of the material's entity.
 
-## Applying the Shader
-Your new shader is now setup, and you can overlay it on players using two methods:
+In a screenspace shader, the bound entity is going to be either null or the player, giving us no useful information on PlayerView.
 
-- `SetScriptOverlayMaterial` (only in TF2 and HL2DM): Fire the `SetScriptOverlayMaterial` input on the !activator with `effects/shaders/coolshader` parameter (or use the equivalent VScript function).
-- `r_screenoverlay` : Use a [point_clientcommand](https://developer.valvesoftware.com/wiki/point_clientcommand) and fire the `Command` input with `r_screenoverlay effects/shaders/coolshader` as the parameter on the !activator.
+But even if it did work in screenspace - it returns a single scalar value - not a `[pitch, yaw]` tuple or `[x, y, z]` vector.
 
-Note: in TF2 and HL2DM, you can stack shaders across two overlays together using both `SetScriptOverlayMaterial` and `r_screenoverlay`.
+However, we can also put a `screenspace_general` material on brushes. With a special shader, we can encode the result of `PlayerView` onto the color of a brush itself.
 
-On brushes/info_overlay/decals, change the $basetexture (or whatever texture you are sampling) to your desired brush texture.
+What we then have is a brush that changes color depending on if you're looking directly at it or directly away from it. 
 
-On models, do the same thing as brushes, but also add `$softwareskin 1` and `$translucent 1` to the vmt. Both are required for the shader to work correctly. In the .qc, add `$mostlyopaque` as well.
+Look straight at it: White. Look away from it: Black. 
 
-## Modifying the Shader
-If you are new to shaders, they are written in a language named HLSL. You can find plenty of guides about this online. This repository comes with multiple example shaders that you can reference. 
+Any angle in between: Shades of gray. (In reality, we encode in two color channels to have 16 bits of resolution)
 
-The basic overview is that the shader code is run for *every* pixel on the screen. Each shader receives a texture coordinate representing where this pixel is, and it must return the new RGBA color value of the pixel at this position.
+With three of these along `+X`, `+Y`, and `+Z`, surrounding the playspace, you now have a measurement of "how much the player is looking down each axis". These are our "anchors". From this, we can recover player pitch and yaw.
 
-[Shadertoy](https://www.shadertoy.com/) is a good website to look for inspiration or see how things are done. Note that these are written in GLSL, a similar language to HLSL with some differences (see below).
+But this requires the player to have all three "anchors" in view, and for us to know where they are located in the screenspace shader in order to read their color - a circular dependency.
 
-The screenspace pixel shader provided by the engine comes with support for up to 4 textures and 16 customizable float constants. The textures and constants can be modified dynamically in the VMT (see template.vmt), especially with material proxies.
+## point_camera
+[point_camera](https://developer.valvesoftware.com/wiki/Point_camera) is an entity that dates back to Half Life 2 and is used to show Dr. Breen at the very start of the game. It's used everywhere in Valve games where there's a TV screen or computer monitor.
 
-To allow the shader to work on anything that isn't a screen overlay, the `$x360appchooser 1` variable must be set (enables vertex transformations, the template sets this to 1 by default).
-Unfortunately, in L4D2 and Portal 2 this variable does not exist, therefore vertices are not transformed by the view projection matrix.
-This could be workarounded by defining a custom vertex shader (not researched yet).
+It renders to a second framebuffer called `_rt_Camera`. Crucially, it's independent of the player - it's a static camera you can put anywhere in your map to "film" whatever you want. It won't move when the player moves.
 
-### Porting GLSL to HLSL
+Some maps use `point_camera` to render custom minimaps. There's a lot of clever uses for a second framebuffer.
 
-Shaders written in GLSL can be ported to HLSL with some changes as follows. This is not a comprehensive list, there may be more changes required.
+It's also a great vector for passing server vScript information to a screenspace shader too. Simply toggle something the camera can see, and you have that information in the shader.
 
-* Different main function form (copy it from the examples)
-* `vec2`, `vec3`, `vec4` -> `float2`, `float3`, `float4`
-* `mat2`, `mat3`, `mat4` -> `float2x2`, `float3x3`, `float4x4`
-* `texture` -> `tex2D`
-* `atan` -> `atan2`
-* `fract` -> `frac`
-* `mix` -> `lerp`
-* `fma` -> `mad`
-* Constructors need all arguments e.g. `vec3(1.0)` -> `float(1.0, 1.0, 1.0)`
-* Origin in GLSL is bottom left. In HLSL it's top left. (UV y coordinate is flipped)
-* Shadertoy passes texture coordinates (`fragCoord`) in pixel form (0-width, 0-height). Source passes `baseTextureCoord` in normalized form (0-1, 0-1). The texture dimensions can be recovered using `TexBaseSize` etc.
-* GLSL is matrix column-major while HLSL is row-major. Matrices need to be re-ordered (i.e. transposed)
+ (With player-specific env_fog_controllers, this can even be 24-bits of player-specific information via the fog color. This was tried originally to encode view angles directly, but you end up with a delay of the player's ping versus where they're really looking. You'll lose the ability to use fog in the map normally, though.)
 
-## Reloading the Shader
-Unfortunately, the shaders cannot be directly reloaded in-game without restarting the game itself. 
+Even more crucially, material proxies like `PlayerView` **still use the player's view angles** rather than the `point_camera`'s, even when being rendered by the camera.
 
-But there is a workaround: you can rename a recompiled shader to something else, change the $pixshader in the VMT to this new name, then type `mat_reloadmaterial <vmt name>` to reload it.
+So, we'll set up a giant box (the demo is 8000x8000x8000) around our playspace, pop four special `PlayerView` brushes in the box, and a `point_camera` to record it.
 
-## Packing the Shader
-If using these in a map: you will need to manually include the shader files if packing with VIDE or CompilePal, as they will not autodetect the files.
+The playspace is inside the skybox in the image below. The red and yellow boxes are our special brushes (fourth is hidden, but would block the view of the skybox).
 
-# Limitations
-* Custom pixel shaders do not work on DirectX 8. The screen will simply render like normal.
-* Source is old and the shaders do not support everything that modern pixel shaders can offer, as the only shader model supported is 2.0b. For example, repeating for-loops don't exist, instead the compiler expands the instructions (which can lead to the instruction limit being hit quickly for large or complex loops).
-* Native lightmap is not available if applying these to brush textures (it shouldbe be possible to sample a 2nd texture as the lightmap to workaround this)
-* Texture dimension constants are not available in Left 4 Dead 2 and Portal 2 (no workaround known yet)
+![screenshot](docs/hammer_1.png)
+![screenshot](docs/hammer_2.png)
 
-# Credits
-This repository uses a jerryrigged shader setup from [Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013) and the [standalone shader compiler](https://github.com/SCell555/ShaderCompile) by SCell555. 
-Some examples are adapted from [Shadertoy](https://www.shadertoy.com/).
+In reality, there's actually 4 brushes (for reasons to be explained later), and the giant nodraw is shaped so we can see all 4 brushes without encapsulating the actual playspace itself.
+
+Now, here's what we (and the shader) sees in `_rt_Camera`:
+![screenshot](docs/rt_camera.png)
+
+If we move our mouse around and look somewhere else, the four boxes change color.
+
+Here's our four boxes' world positions (+X, +Y, +Z, and the diagonal +XYZ):
+```
+A1 = (8000,    0,    0)
+A2 = (   0, 8000,    0)
+A3 = (   0,    0, 8000)
+A4 = (8000, 8000, 8000)
+```
+
+The playspace is centered around 0,0,0.
+
+Of course, if your map is larger than 16,000 units wide, you can place these boxes at further distances.
+
+We can bind `_rt_Camera` into our screenspace shader, read those colors (at fixed positions), and do some maths to recover our pitch and yaw.
+
+Each color is encoding the dot product of the player's forward vector (that we're trying to find) and `Dᵢ = normalize(Aᵢ − P)`: a normalized direction from the player to the anchor `i`.
+
+Why four boxes instead of three? Three boxes gives us three equations for three unknowns. However, if there's any error at all in our readings (float precision, quantisation error, etc), or the player stands on an axis where two anchors become collinear, the system becomes unsolvable.
+
+A fourth box overdetermines the system - gives it redundancy - and least-squares averages out the error across all four measurements.
+
+## Angle recovery
+
+All four boxes give us a set of simultaneous equations:
+```cpp
+c₁ = dot(f, D₁)
+c₂ = dot(f, D₂)
+c₃ = dot(f, D₃)
+c₄ = dot(f, D₄)
+```
+
+Where:
+- `f` = camera forward vector (the unknown we're solving for)
+- `Dᵢ = normalize(Aᵢ − P)` = unit direction from the player to the anchor (known, because we know the player position and the anchor position)
+- `cᵢ` = measured cosine from the texture (known)
+
+We now have four equations for three unknowns (`f.x, f.y, f.z`).
+
+Least-squares minimises the total squared error across all four measurements. We end up with a simple 3x3 linear system that is always solvable:
+
+```
+M · f = b
+```
+
+Where **M** = `DᵀD`, a 3x3 matrix built from the known anchor directions, and **b** = `Dᵀc`.
+
+To recover `f` (our view angles):
+```
+M⁻¹· M · f = M⁻¹ · b
+f = M⁻¹ · b
+ ```
+
+The next step is generally to ask your favorite LLM to implement the matrix reciprocal and matrix determinant calculations in HLSL for you.
+
+This gives us a vector `f`, which is the player's forward vector. Recover pitch and yaw in a shader via:
+```
+f.x = cos(pitch) · cos(yaw)
+f.y = cos(pitch) · sin(yaw)
+f.z = sin(pitch)
+
+therefore
+
+yaw = atan2(f.y, f.x)
+pitch = asin(f.z)
+```
+
+It's recommended to use the forward vector directly instead of the angles, as `atan2()` goes to infinity at pitch `+-90`.

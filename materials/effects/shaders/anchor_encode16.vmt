@@ -1,0 +1,27 @@
+"screenspace_general"
+{
+	$pixshader "anchor_encode16_ps20"   // engine swaps to _ps20b when supported
+	$basetexture "vgui/white"           // unused by the shader, but bind something valid
+	$x360appchooser 1                   // keep consistent with the other worm mats
+	$nocull 1
+	$nofog  1                           // fog OFF on this surface we want the
+	                                    // raw shader output, not fogged
+	$linearwrite               1
+
+	// proxy result holders (must exist as vars before the proxy writes them)
+	$c0_x -255
+
+	"<dx90"
+	{
+		$no_draw 1
+	}
+
+	Proxies
+	{
+		PlayerView
+		{
+			scale     1
+			resultVar "$c0_x"
+		}
+	}
+}
